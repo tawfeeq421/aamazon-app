@@ -31,7 +31,7 @@ pipeline{
                     sh """
                     ${SCANNER_HOME}/bin/sonar-scanner \
                     -Dsonar.projectName=Amazon \
-                    -Dsonar.projectKey=Amazon 
+                    -Dsonar.projectKey=Amazon
                     """
                 }
             }
@@ -64,17 +64,20 @@ pipeline{
         stage('Image Scan & Push'){
             steps{
                 script{
+                    def app = docker.image("${DOCKER_IMAGE}:${DOCKER_TAG}")
                     sh """
                     trivy image \
                     --severity HIGH,CRITICAL \
                     --format table \
                     --no-progress \
-                    -o trivy-image-report.txt
+                    -o trivy-image-report.txt \
                     ${DOCKER_IMAGE}:${DOCKER_TAG}
                     """
-                    docker.withRegistry('https://index.docker.io/v1', 'docker-cred'){
+                    docker.withRegistry('https://index.docker.io/v1/', 'docker-cred'){
                         app.push()
-                    }                }
+                        app.push('latest')
+                    }
+                }
             }
         }
     }
@@ -86,7 +89,7 @@ pipeline{
             slackSend(
                 channel: "amazon",
                 color: "good",
-                message: "✅ SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER}\nCheck Docker Image ${DPCKER_IMAGE}:${DOCKER_TAG}"
+                message: "✅ SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER}\nCheck Docker Image ${DOCKER_IMAGE}:${DOCKER_TAG}"
             )
         }
         failure{
