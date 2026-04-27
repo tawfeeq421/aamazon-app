@@ -1,74 +1,100 @@
 pipeline{
     agent any
     tools{
-        jdk 'jdk17'
-        nodejs 'node16'
+        jdk 'JDK17'
+        nodejs 'NODE16'
     }
-    environment {
-        SCANNER_HOME=tool 'sonar-scanner'
+    environment{
+        DOCKER_IMAGE = 'tawfeeq421/amazon'
+        DOCKER_TAG ="${BUILD_NUMBER}"
+        SCANNER_HOME = tool 'sonar'
     }
-    stages {
-        stage('clean workspace'){
+    stages{
+        stage('Clean Workspace'){
             steps{
                 cleanWs()
             }
         }
-        stage('Checkout from Git'){
+        stage('Checkout SCM'){
             steps{
                 git branch: 'main', url: 'https://github.com/tawfeeq421/aamazon-app.git'
             }
         }
-        stage("Sonarqube Analysis "){
+        stage('Install Dependency'){
             steps{
-                withSonarQubeEnv('sonar-server') {
-                    sh ''' $SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=Amazon \
-                    -Dsonar.projectKey=Amazon '''
+                sh 'npm install'
+            }
+        }
+        stage('SonarQube Scan'){
+            steps{
+                withSonarQubeEnv('sonarserver'){
+                    sh """
+                    ${SCANNER_HOME}/bin/sonar-scanner \
+                    -Dsonar.projectName=Amazon \
+                    -Dsonar.projectKey=Amazon 
+                    """
                 }
             }
         }
-        stage("quality gate"){
-           steps {
-                script {
-                    waitForQualityGate abortPipeline: false, credentialsId: 'Sonar-token'
+        stage('Quality Gate'){
+            steps{
+                timeout(time: 1, unit: 'HOURS'){
+                    waitForQualityGate abortPipeline: true
                 }
             }
         }
-        stage('Install Dependencies') {
-            steps {
-                sh "npm install"
+        stage('Trivy FS Scan'){
+            steps{
+                sh '''
+                trivy fs . \
+                --severity HIGH,CRITICAL \
+                --format table \
+                --no-progress \
+                -o trivy-report.txt
+                '''
             }
         }
-        stage('OWASP FS SCAN') {
-            steps {
-                dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit', odcInstallation: 'DP-Check'
-                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
-            }
-        }
-        stage('TRIVY FS SCAN') {
-            steps {
-                sh "trivy fs . > trivyfs.txt"
-            }
-        }
-        stage("Docker Build & Push"){
+        stage('Docker Build'){
             steps{
                 script{
-                   withDockerRegistry(credentialsId: 'docker', toolName: 'docker'){
-                       sh "docker build -t amazon ."
-                       sh "docker tag amazon tawfeeq421/amazon:latest "
-                       sh "docker push tawfeeq421/amazon:latest "
-                    }
+                    def app docker.build("${DOCKER_IMAGE}:${DOCKER_TAG}",".")
                 }
             }
         }
-        stage("TRIVY"){
+        stage('Image Scan & Push'){
             steps{
-                sh "trivy image tawfeeq421/amazon:latest > trivyimage.txt"
+                script{
+                    sh """
+                    trivy image \
+                    --severity HIGH,CRITICAL \
+                    --format table \
+                    --no-progress \
+                    -o trivy-image-report.txt
+                    ${DOCKER_IMAGE}:${DOCKER_TAG}
+                    """
+                    docker.withRegistry('https://index.docker.io/v1', 'docker-cred'){
+                        app.push()
+                    }                }
             }
         }
-        stage('Deploy to container'){
-            steps{
-                sh 'docker run -d --name amazon -p 3000:3000 tawfeeq421/amazon:latest'
-            }
+    }
+    post {
+        always{
+            archiveArtifacts artifacts: 'trivy-report.txt, trivy-image-report.txt', fingerprint: true
+        }
+        success{
+            slackSend(
+                channel: "amazon",
+                color: "good",
+                message: "✅ SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER}\nCheck Docker Image ${DPCKER_IMAGE}:${DOCKER_TAG}"
+            )
+        }
+        failure{
+            slackSend(
+                channel: "amazon",
+                color: "danger",
+                message: "❌ FAILURE: ${env.JOB_NAME} #${env.BUILD_NUMBER}\n See logs ${env.BUILD_URL}"
+            )
         }
     }
 }
