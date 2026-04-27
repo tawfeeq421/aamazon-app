@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: my-ingress
+  namespace: amazon
+  labels:
+    auther: Tawfeeq
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClass: ngnix
+  tls:
+    - hosts:
+      - amazonapp.com
+      secretName: amazon-tls
+  rules:
+    - host:
+      paths:
+        - path: /
+          pathType: Prefix
+          backend:
+            name: amazon-app-service
+            port:
+              number: 80
