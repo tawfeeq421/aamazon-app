@@ -56,27 +56,35 @@ pipeline{
         }
         stage('Docker Build'){
             steps{
-                script{
-                    def app = docker.build("${DOCKER_IMAGE}:${DOCKER_TAG}", ".")
-                }
+                sh "docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} ."
             }
         }
-        stage('Image Scan & Push'){
+        stage('Trivy Image Scan'){
             steps{
-                script{
-                    def app = docker.image("${DOCKER_IMAGE}:${DOCKER_TAG}")
-                    sh """
-                    trivy image \
-                    --severity HIGH,CRITICAL \
-                    --format table \
-                    --no-progress \
-                    -o trivy-image-report.txt \
-                    ${DOCKER_IMAGE}:${DOCKER_TAG}
-                    """
-                    docker.withRegistry('https://index.docker.io/v1/', 'docker-cred'){
-                        app.push()
-                        app.push('latest')
-                    }
+                sh """
+                trivy image \
+                --severity HIGH,CRITICAL \
+                --format table \
+                --no-progress \
+                -o trivy-image-report.txt \
+                ${DOCKER_IMAGE}:${DOCKER_TAG}
+                """
+            }
+        }
+        stage('Docker Push'){
+            steps{
+                withCredentials([usernamePassword(
+                    credentialsId : 'docker-cred',
+                    usernameVariable: 'USER',
+                    passwordVariable: 'PASS'
+                )]){
+                    echo $PASS | docker login -u $USER --password-stdin 
+
+                    docker push ${DOCKER_IMAGE}:${DOCKER_TAG}
+
+                    docker tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_IMAGE}:latest
+
+                    docker push ${DOCKER_IMAGE}:latest
                 }
             }
         }
@@ -87,14 +95,14 @@ pipeline{
         }
         success{
             slackSend(
-                channel: "amazon",
+                channel: "#amazon",
                 color: "good",
                 message: "✅ SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER}\nCheck Docker Image ${DOCKER_IMAGE}:${DOCKER_TAG}"
             )
         }
         failure{
             slackSend(
-                channel: "amazon",
+                channel: "#amazon",
                 color: "danger",
                 message: "❌ FAILURE: ${env.JOB_NAME} #${env.BUILD_NUMBER}\n See logs ${env.BUILD_URL}"
             )
